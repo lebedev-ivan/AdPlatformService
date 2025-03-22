@@ -3,7 +3,6 @@ using System.Linq;
 using System.IO;
 using System.Text;
 using AdPlatformService.Models;
-using System.IO.Pipes;
 
 namespace AdPlatformService.Services
 {
@@ -22,45 +21,61 @@ namespace AdPlatformService.Services
 
             while ((line = reader.ReadLine()) != null)
             {
-                Console.WriteLine($"Чтение строки: {line}");
-
-                var parts = line.Split(':');
-                if (parts.Length != 2) continue;
-
-                var platform = parts[0].Trim();
-                var locations = parts[1].Split(',').Select(l => l.Trim()).ToList();
-
-                Console.WriteLine($"Platform: {platform}, Locations: {string.Join(", ", locations)}");
-
-                foreach (var location in locations)
+                try
                 {
-                    _adPlatforms.AddOrUpdate(location, new List<string> { platform },
-                        (key, list) => { list.Add(platform); return list; });
+                    Console.WriteLine($"Чтение строки: {line}");
+
+                    var parts = line.Split(':');
+                    if (parts.Length != 2) continue;
+
+                    var platform = parts[0].Trim();
+                    var locations = parts[1].Split(',')
+                        .Select(l => l.Trim())
+                        .Where(l => !string.IsNullOrEmpty(l))
+                        .ToList();
+
+                    if (locations.Count == 0) continue;
+
+                    foreach (var location in locations)
+                    {
+                        _adPlatforms.AddOrUpdate(location, new List<string> { platform },
+                            (key, list) => { list.Add(platform); return list; });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Ошибка при обработке строки: {line}. Ошибка: {ex.Message}");
                 }
             }
 
             Console.WriteLine("Содержимое _adPlatforms:");
-
             foreach (var kvp in _adPlatforms)
             {
                 Console.WriteLine($"Location: {kvp.Key}, Platforms: {string.Join(", ", kvp.Value)}");
             }
         }
 
-        // Поиск рекламных площадок по локации
+        // Выполняем поиск рекламных площадок по локации
         public List<string> Search(string location)
         {
             Console.OutputEncoding = Encoding.UTF8;
 
-            // Если location не пустой, то точное совпадение
             if (string.IsNullOrWhiteSpace(location))
                 return new List<string>();
 
-            var result = _adPlatforms
-                .Where(kvp => kvp.Key.Contains(location, System.StringComparison.OrdinalIgnoreCase))
+            // Ищем площадки, которые точно соответствуют локации
+            var exactMatch = _adPlatforms
+                .Where(kvp => kvp.Key == location)
                 .SelectMany(kvp => kvp.Value)
-                .Distinct()
                 .ToList();
+
+            // Ищем площадки для вложенных локаций
+            var nestedMatches = _adPlatforms
+                .Where(kvp => location.StartsWith(kvp.Key + "/"))
+                .SelectMany(kvp => kvp.Value)
+                .ToList();
+
+            var result = exactMatch.Concat(nestedMatches).Distinct().ToList();
 
             Console.WriteLine($"Поиск по локации '{location}': {string.Join(", ", result)}");
 
