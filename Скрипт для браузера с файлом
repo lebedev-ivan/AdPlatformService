@@ -1,0 +1,22 @@
+// Создаем input элемент для выбора файла
+const input = document.createElement('input');
+input.type = 'file';
+
+// Обрабатываем выбор файла
+input.onchange = (event) => {
+    const file = event.target.files[0]; // Получаем выбранный файл
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // Отправляем POST-запрос
+    fetch('http://localhost:5256/api/ad-platforms/upload', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.text())
+    .then(data => console.log(data))
+    .catch(error => console.error('Ошибка:', error));
+};
+
+// Запускаем выбор файла
+input.click();
