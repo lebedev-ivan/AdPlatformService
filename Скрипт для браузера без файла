@@ -1,0 +1,22 @@
+// Создаем FormData объект
+const formData = new FormData();
+
+// Создаем файл с данными
+const fileContent = `Яндекс.Директ:/ru
+Ревдинский рабочий:/ru/svrd/revda,/ru/svrd/pervik
+Газета уральских москвичей:/ru/msk,/ru/permobl,/ru/chelobl
+Крутая реклама:/ru/svrd`;
+
+const file = new File([fileContent], 'platforms.txt', { type: 'text/plain' });
+
+// Добавляем файл в FormData
+formData.append('file', file);
+
+// Отправляем POST-запрос
+fetch('http://localhost:5256/api/ad-platforms/upload', {
+    method: 'POST',
+    body: formData
+})
+.then(response => response.text())
+.then(data => console.log(data))
+.catch(error => console.error('Ошибка:', error));
