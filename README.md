@@ -1,4 +1,4 @@
-![Логотип проекта](https://github.com/lebedev-ivan/AdPlatformService/effective_mobile.png)
+![Логотип проекта](effective_mobile.png)
 
 клонировать в рекдактор с ветви "master"
 
