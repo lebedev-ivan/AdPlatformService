@@ -2,84 +2,121 @@
 using System.Linq;
 using System.IO;
 using System.Text;
-using AdPlatformService.Models;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace AdPlatformService.Services
 {
     public class AdPlatformServiceHandler
     {
-        private readonly ConcurrentDictionary<string, List<string>> _adPlatforms = new();
+        private ConcurrentDictionary<string, List<string>> _adPlatforms = new();
+        private readonly ConcurrentDictionary<string, List<string>> _buffer = new();
+        private readonly ILogger<AdPlatformServiceHandler> _logger;
 
-        // Загружаем рекламные площадки из файла
-        public void UploadFile(Stream fileStream)
+        public AdPlatformServiceHandler(ILogger<AdPlatformServiceHandler> logger)
         {
-            Console.OutputEncoding = Encoding.UTF8;
+            _logger = logger;
+        }
 
-            using var reader = new StreamReader(fileStream, Encoding.UTF8);
-            string? line;
-            _adPlatforms.Clear();
+        public async Task UploadFileAsync(Stream fileStream)
+        {
+            _logger.LogInformation("Начало обработки файла");
 
-            while ((line = reader.ReadLine()) != null)
+            try
             {
-                try
+                fileStream.Position = 0;
+
+                using var reader = new StreamReader(fileStream, Encoding.UTF8, leaveOpen: true);
+                _buffer.Clear();
+
+                int lineNumber = 0;
+                int processedLocations = 0;
+                string line;
+
+                while ((line = await reader.ReadLineAsync()) != null)
                 {
-                    Console.WriteLine($"Чтение строки: {line}");
-
-                    var parts = line.Split(':');
-                    if (parts.Length != 2) continue;
-
-                    var platform = parts[0].Trim();
-                    var locations = parts[1].Split(',')
-                        .Select(l => l.Trim())
-                        .Where(l => !string.IsNullOrEmpty(l))
-                        .ToList();
-
-                    if (locations.Count == 0) continue;
-
-                    foreach (var location in locations)
+                    lineNumber++;
+                    try
                     {
-                        _adPlatforms.AddOrUpdate(location, new List<string> { platform },
-                            (key, list) => { list.Add(platform); return list; });
+                        var parts = line.Split(':');
+                        if (parts.Length != 2)
+                        {
+                            _logger.LogWarning("Строка {LineNumber} имеет неверный формат", lineNumber);
+                            continue;
+                        }
+
+                        var platform = parts[0].Trim();
+                        var locations = parts[1].Split(',')
+                            .Select(l => l.Trim())
+                            .Where(l => !string.IsNullOrEmpty(l))
+                            .ToList();
+
+                        foreach (var location in locations)
+                        {
+                            _buffer.AddOrUpdate(location,
+                                new List<string> { platform },
+                                (key, list) =>
+                                {
+                                    if (!list.Contains(platform))
+                                        list.Add(platform);
+                                    return list;
+                                });
+                            processedLocations++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, "Ошибка в строке {LineNumber}: {Line}", lineNumber, line);
                     }
                 }
-                catch (Exception ex)
+
+                Interlocked.Exchange(ref _adPlatforms, _buffer);
+
+                _logger.LogInformation("Обработано строк: {Lines}, локаций: {Locations}",
+                    lineNumber, processedLocations);
+
+                if (processedLocations == 0)
                 {
-                    Console.WriteLine($"Ошибка при обработке строки: {line}. Ошибка: {ex.Message}");
+                    _logger.LogError("Файл не содержит валидных данных. Пример ожидаемого формата: 'Платформа1:/loc1,/loc2'");
                 }
             }
-
-            Console.WriteLine("Содержимое _adPlatforms:");
-            foreach (var kvp in _adPlatforms)
+            catch (Exception ex)
             {
-                Console.WriteLine($"Location: {kvp.Key}, Platforms: {string.Join(", ", kvp.Value)}");
+                _logger.LogError(ex, "Критическая ошибка обработки файла");
+                throw;
             }
         }
 
-        // Выполняем поиск рекламных площадок по локации
-        public List<string> Search(string location)
+        public Task<List<string>> SearchAsync(string location)
         {
-            Console.OutputEncoding = Encoding.UTF8;
+            _logger.LogDebug("Поиск площадок для локации: {Location}", location);
 
             if (string.IsNullOrWhiteSpace(location))
-                return new List<string>();
+                return Task.FromResult(new List<string>());
 
-            // Ищем площадки, которые точно соответствуют локации
-            var exactMatch = _adPlatforms
-                .Where(kvp => kvp.Key == location)
-                .SelectMany(kvp => kvp.Value)
-                .ToList();
+            var result = new List<string>();
 
-            // Ищем площадки для вложенных локаций
-            var nestedMatches = _adPlatforms
-                .Where(kvp => location.StartsWith(kvp.Key + "/"))
-                .SelectMany(kvp => kvp.Value)
-                .ToList();
+            // Поиск точного совпадения (O(1))
+            if (_adPlatforms.TryGetValue(location, out var platforms))
+            {
+                result.AddRange(platforms);
+            }
 
-            var result = exactMatch.Concat(nestedMatches).Distinct().ToList();
+            // Поиск вложенных локаций
+            var parts = location.Split('/');
+            for (int i = parts.Length - 1; i > 0; i--)
+            {
+                var parentLocation = string.Join('/', parts.Take(i));
+                if (_adPlatforms.TryGetValue(parentLocation, out var parentPlatforms))
+                {
+                    result.AddRange(parentPlatforms);
+                }
+            }
 
-            Console.WriteLine($"Поиск по локации '{location}': {string.Join(", ", result)}");
+            _logger.LogDebug("Найдено {Count} площадок для локации {Location}",
+                result.Distinct().Count(), location);
 
-            return result;
+            return Task.FromResult(result.Distinct().ToList());
         }
     }
 }
